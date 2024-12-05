@@ -1,3 +1,17 @@
-faster-whisper
-numpy
-tqdm
+# Core dependencies
+whisperx @ git+https://github.com/m-bain/whisperx.git
+numpy<2.0.0  # Pin to avoid NaN issue
+tqdm>=4.65.0
+
+# PyTorch with CUDA support
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+torchaudio>=2.0.0
+torchvision>=0.15.0
+
+# Additional WhisperX dependencies
+transformers>=4.33.0
+ffmpeg-python>=0.2.0
+pandas>=2.0.0
+librosa>=0.10.0
+pyannote.audio==3.1.1  # Pin specific version

@@ -1,4 +1,3 @@
-from difflib import SequenceMatcher
 from typing import List, Dict
 import os
 from pathlib import Path
@@ -11,10 +10,6 @@ def format_timestamp(seconds: float) -> str:
     secs = seconds % 60
     millisecs = int((secs - int(secs)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{int(secs):02d},{millisecs:03d}"
-
-def similarity_score(a: str, b: str) -> float:
-    """Calculate similarity between two strings."""
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 def read_reference_lyrics(file_path: str) -> List[str]:
     """Read reference lyrics file and return as list of lines."""

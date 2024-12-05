@@ -25,23 +25,17 @@ class LyricsAligner:
         self.config = config or ConfigLoader.load_config()
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        try:
-            # Initialize Whisper model with compute type
-            self.model = whisperx.load_model(
-                "large-v2",
-                self.device,
-                compute_type=self.config.compute_type,
-                language="en"
-            )
-            
-            # Initialize alignment model
-            self.alignment_model = whisperx.load_align_model(
-                language_code=self.config.language_code,
-                device=self.device
-            )
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize models: {str(e)}")
+        # Initialize models with proper compute type
+        self.model = whisperx.load_model(
+            "large-v2", 
+            self.device,
+            compute_type=self.config.compute_type
+        )
+        
+        self.alignment_model = whisperx.load_align_model(
+            language_code=self.config.language_code,
+            device=self.device
+        )
         
         self.chorus_patterns: Set[str] = set()
         self.debug_logger: Optional[DebugLogger] = None
@@ -49,6 +43,7 @@ class LyricsAligner:
     def process_audio(self, audio_path: str, output_dir: str, debug: bool = False) -> bool:
         """Process an audio file and generate aligned SRT."""
         try:
+            # Setup debug logging if requested
             if debug:
                 self.debug_logger = DebugLogger(audio_path)
                 self.debug_logger.logger.info("\nSTARTING ALIGNMENT PROCESS")
@@ -63,44 +58,45 @@ class LyricsAligner:
             if not reference_lyrics:
                 raise ValueError("No valid lyrics found in lyrics file")
 
+            # Identify chorus patterns
             self._identify_chorus_patterns(reference_lyrics)
 
             # Load and process audio
             audio = whisperx.load_audio(audio_path)
             
-            # Transcribe with VAD (built into transcribe)
+            # Transcribe with VAD
             result = self.model.transcribe(
                 audio,
                 batch_size=self.config.batch_size,
-                compute_type=self.config.compute_type,
-                vad_filter=self.config.use_vad,
-                vad_parameters={"onset": self.config.vad_onset, "offset": self.config.vad_offset}
+                compute_type=self.config.compute_type
             )
-
-            # Align transcription
-            aligned_results = whisperx.align(
+            
+            # Align whisper output
+            result = whisperx.align(
                 result["segments"],
                 self.alignment_model,
                 audio,
                 self.device,
                 return_char_alignments=False
             )
-
-            # Extract word segments
-            word_segments = self._extract_word_segments(aligned_results["segments"])
+            
+            # Convert aligned segments to word segments
+            word_segments = self._extract_word_segments(result["segments"])
             if not word_segments:
                 raise ValueError("No words detected in audio")
 
-            # Align lyrics with transcription
+            # Align lyrics
             aligned_lyrics = self._align_lyrics(reference_lyrics, word_segments)
             if not aligned_lyrics:
                 raise ValueError("Failed to align any lyrics")
 
-            # Refine alignments
+            # Perform forced alignment refinement
             aligned_lyrics = self._refine_alignments(audio, aligned_lyrics)
+
+            # Post-process alignments
             aligned_lyrics = self._post_process_alignments(aligned_lyrics)
 
-            # Write output
+            # Write output files
             srt_path = os.path.join(output_dir, Path(audio_path).stem + ".srt")
             write_srt_file(aligned_lyrics, srt_path)
 
@@ -132,7 +128,10 @@ class LyricsAligner:
             if count > 1:
                 self.chorus_patterns.add(line)
 
-    def _extract_word_segments(self, segments: List[Dict]) -> List[WordSegment]:
+        if self.debug_logger:
+            self.debug_logger.logger.info(f"\nIdentified {len(self.chorus_patterns)} potential chorus patterns")
+
+    def _extract_word_segments(self, segments) -> List[WordSegment]:
         """Extract word segments from WhisperX output."""
         word_segments = []
         for segment in segments:
@@ -148,16 +147,20 @@ class LyricsAligner:
     def _align_lyrics(self, reference_lyrics: List[str], word_segments: List[WordSegment]) -> List[AlignedLine]:
         """Align reference lyrics with transcribed segments."""
         aligned_lines = []
+        word_idx = 0
         last_end_time = 0
         
         for line in reference_lyrics:
-            is_chorus = normalize_text(line) in self.chorus_patterns
-            threshold = (
-                self.config.chorus_similarity_threshold if is_chorus 
-                else self.config.base_similarity_threshold
-            )
+            if self.debug_logger:
+                self.debug_logger.logger.info(f"\nProcessing line: {line}")
             
-            best_match = self._find_best_match(line, word_segments, threshold)
+            if not line.strip():
+                continue
+            
+            is_chorus = normalize_text(line) in self.chorus_patterns
+            threshold = self.config.chorus_similarity_threshold if is_chorus else self.config.base_similarity_threshold
+            
+            best_match = self._find_best_match(line, word_segments[word_idx:], threshold)
             
             if best_match:
                 aligned_lines.append(AlignedLine(
@@ -168,9 +171,12 @@ class LyricsAligner:
                     is_chorus=is_chorus,
                     words=best_match.words
                 ))
+                word_idx += best_match.end_idx
                 last_end_time = best_match.timing[1]
+                
+                if self.debug_logger:
+                    self.debug_logger.log_match_result(line, best_match)
             else:
-                # Fallback timing estimation
                 estimated_duration = len(line.split()) / self.config.expected_words_per_second
                 start_time = last_end_time + self.config.min_gap_between_lines
                 
@@ -181,8 +187,12 @@ class LyricsAligner:
                     confidence=0.0,
                     is_chorus=is_chorus
                 ))
+                
                 last_end_time = start_time + estimated_duration
-
+                
+                if self.debug_logger:
+                    self.debug_logger.logger.warning(f"No match found for line: {line}")
+        
         return aligned_lines
 
     def _refine_alignments(self, audio: np.ndarray, aligned_lines: List[AlignedLine]) -> List[AlignedLine]:
@@ -194,52 +204,43 @@ class LyricsAligner:
                 self.debug_logger.logger.info(f"\nRefining alignment for: {line.text}")
             
             try:
-                # 1. Extract audio segment with buffer
+                # Extract audio segment with buffer
                 buffer = 0.5  # 500ms buffer
                 start_sample = max(0, int((line.start - buffer) * 16000))
                 end_sample = min(len(audio), int((line.end + buffer) * 16000))
                 segment = audio[start_sample:end_sample]
                 
-                # 2. Prepare segment with known timing
-                segment_duration = (end_sample - start_sample) / 16000
-                segments = [{
-                    "text": line.text,
-                    "start": buffer,
-                    "end": segment_duration - buffer
-                }]
-                
-                # 3. Use the alignment model directly for forced alignment
+                # Perform forced alignment with corrected parameters
                 result = self.alignment_model.align(
-                    text=line.text,
-                    audio=segment,
-                    device=self.device
+                    text=[line.text],  # Text must be a list
+                    audio=segment,     # Audio segment
+                    device=self.device # Device parameter
                 )
                 
-                if result and "word_segments" in result:
-                    words = result["word_segments"]
-                    if words:
-                        # 4. Adjust timing to account for the buffer
-                        start_offset = line.start - buffer if line.start > buffer else 0
-                        
-                        # 5. Create refined line with word-level alignment
-                        refined_line = AlignedLine(
-                            text=line.text,
-                            start=words[0]["start"] + start_offset,
-                            end=words[-1]["end"] + start_offset,
-                            confidence=max(line.confidence, result.get("confidence", 0.0)),
-                            is_chorus=line.is_chorus,
-                            words=[WordSegment(
-                                text=w["word"],
-                                start=w["start"] + start_offset,
-                                end=w["end"] + start_offset,
-                                probability=w.get("score", 0.0)
-                            ) for w in words]
-                        )
-                        refined_lines.append(refined_line)
-                        continue
-                
-                refined_lines.append(line)  # Keep original if refinement fails
-                
+                # Note the change from word_segments to word-segments in the key
+                if result and result.get("word-segments"):
+                    words = result["word-segments"]
+                    # Adjust timing to account for the buffer
+                    start_offset = line.start - buffer if line.start > buffer else 0
+                    refined_line = AlignedLine(
+                        text=line.text,
+                        start=words[0]["start"] + start_offset,
+                        end=words[-1]["end"] + start_offset,
+                        confidence=max(line.confidence, result.get("confidence", 0.0)),
+                        is_chorus=line.is_chorus,
+                        words=[WordSegment(
+                            text=w["word"],
+                            start=w["start"] + start_offset,
+                            end=w["end"] + start_offset,
+                            probability=w.get("score", 0.0)
+                        ) for w in words]
+                    )
+                    refined_lines.append(refined_line)
+                else:
+                    if self.debug_logger:
+                        self.debug_logger.logger.warning(f"No word segments found for line: {line.text}")
+                    refined_lines.append(line)
+                    
             except Exception as e:
                 if self.debug_logger:
                     self.debug_logger.logger.warning(f"Refinement failed for line: {line.text}. Error: {str(e)}")
@@ -289,6 +290,16 @@ class LyricsAligner:
                         words=segment_words
                     )
 
+                    if self.debug_logger:
+                        self.debug_logger.logger.debug(
+                            f"\nPotential match found:"
+                            f"\nReference: {reference}"
+                            f"\nTranscribed: {segment_text}"
+                            f"\nSimilarity: {similarity:.3f}"
+                            f"\nConfidence: {confidence:.3f}"
+                            f"\nTiming: {format_timestamp(segment_words[0].start)} -> {format_timestamp(segment_words[-1].end)}"
+                        )
+
         return best_match
 
     def _post_process_alignments(self, aligned_lyrics: List[AlignedLine]) -> List[AlignedLine]:
@@ -302,14 +313,14 @@ class LyricsAligner:
             prev_line = aligned_lyrics[i-1]
             curr_line = aligned_lyrics[i]
 
-            min_gap = self.config.chorus_gap if curr_line.is_chorus else self.config.min_gap_between_lines
-            
-            if curr_line.start < prev_line.end + min_gap:
+            if curr_line.start < prev_line.end + self.config.min_gap_between_lines:
+                min_gap = self.config.chorus_gap if curr_line.is_chorus else self.config.min_gap_between_lines
                 curr_line.start = prev_line.end + min_gap
+
                 if curr_line.end < curr_line.start + self.config.min_line_duration:
                     curr_line.end = curr_line.start + self.config.min_line_duration
 
-            if curr_line.end - curr_line.start > self.config.max_line_duration:
-                curr_line.end = curr_line.start + self.config.max_line_duration
+        if self.debug_logger:
+            self.debug_logger.log_final_results(aligned_lyrics)
 
         return aligned_lyrics

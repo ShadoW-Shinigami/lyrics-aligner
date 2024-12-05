@@ -5,5 +5,17 @@
     "chorus_gap": 0.2,
     "base_similarity_threshold": 0.3,
     "chorus_similarity_threshold": 0.4,
-    "word_window_buffer": 5
+    "word_window_buffer": 5,
+    "position_penalty_weight": 0.5,
+    "length_penalty_weight": 0.3,
+    "timing_confidence_weight": 0.3,
+    "word_match_min_confidence": 0.8,
+    "expected_words_per_second": 3.0,
+    
+    "batch_size": 16,
+    "compute_type": "int8",
+    "vad_onset": 0.5,
+    "vad_offset": 0.363,
+    "min_word_duration": 0.1,
+    "language_code": "en"
 }

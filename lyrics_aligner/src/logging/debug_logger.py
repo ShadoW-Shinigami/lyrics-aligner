@@ -1,79 +1,92 @@
 import logging
-from datetime import datetime
+import os
 from pathlib import Path
-from typing import List, Dict, Optional
-import numpy as np
-from lyrics_aligner.src.core.utils import format_timestamp
+from typing import List, Optional
 from lyrics_aligner.src.core.models import AlignedLine, MatchResult
+from lyrics_aligner.src.core.utils import format_timestamp
 
 class DebugLogger:
-    def __init__(self, log_dir: str, audio_name: str, debug_mode: bool = False, console_output: bool = True):
-        """Initialize the debug logger."""
-        self.debug_mode = debug_mode
+    """Handles debug logging for the alignment process."""
+
+    def __init__(self, audio_path: str):
+        """Initialize debug logger for an audio file."""
+        self.debug_mode = True
         self.logger = None
-        
-        if not self.debug_mode:
-            return
+        self._setup_logger(audio_path)
+
+    def _setup_logger(self, audio_path: str):
+        """Set up logging configuration."""
+        try:
+            # Create logs directory
+            log_dir = Path(audio_path).parent / "logs"
+            log_dir.mkdir(exist_ok=True)
             
-        # Create log directory if it doesn't exist
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
-        
-        # Set up logging
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = Path(log_dir) / f"{audio_name}_{timestamp}.log"
-        
-        self.logger = logging.getLogger(f"lyrics_aligner_{audio_name}")
-        self.logger.setLevel(logging.INFO)
-        
-        # File handler
-        fh = logging.FileHandler(log_file, encoding='utf-8')
-        fh.setLevel(logging.INFO)
-        
-        # Formatter
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        fh.setFormatter(formatter)
-        self.logger.addHandler(fh)
-        
-        # Console handler (optional)
-        if console_output:
+            # Set up log file path
+            audio_name = Path(audio_path).stem
+            log_file = log_dir / f"{audio_name}_alignment.log"
+            
+            # Configure logger
+            self.logger = logging.getLogger(f"aligner_{audio_name}")
+            self.logger.setLevel(logging.DEBUG)
+            
+            # File handler
+            fh = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+            fh.setLevel(logging.DEBUG)
+            
+            # Console handler
             ch = logging.StreamHandler()
             ch.setLevel(logging.INFO)
+            
+            # Formatter
+            formatter = logging.Formatter('%(message)s')
+            fh.setFormatter(formatter)
             ch.setFormatter(formatter)
+            
+            # Add handlers
+            self.logger.addHandler(fh)
             self.logger.addHandler(ch)
+            
+        except Exception as e:
+            print(f"Failed to set up logger: {e}")
+            self.debug_mode = False
 
-    def section_header(self, title: str):
-        """Log a section header."""
+    def log_transcription_result(self, result: dict):
+        """Log WhisperX transcription result."""
         if self.debug_mode and self.logger:
-            self.logger.info("\n" + "="*50)
-            self.logger.info(title)
-            self.logger.info("="*50)
+            self.logger.info("\nWhisperX Transcription Result:")
+            for segment in result["segments"]:
+                self.logger.info(f"\nSegment {segment.get('id', '?')}:")
+                self.logger.info(f"Text: {segment.get('text', '')}")
+                if "words" in segment:
+                    self.logger.info("Words:")
+                    for word in segment["words"]:
+                        self.logger.info(
+                            f"  {word['word']:<20} "
+                            f"Time: {word['start']:.2f} -> {word['end']:.2f} "
+                            f"Score: {word.get('score', 0.0):.2f}"
+                        )
 
-    def log_reference_lyrics(self, lyrics: List[str]):
-        """Log the reference lyrics."""
+    def log_match_result(self, reference: str, match: MatchResult):
+        """Log matching result for a line."""
         if self.debug_mode and self.logger:
-            self.logger.info("\nReference Lyrics:")
-            for i, line in enumerate(lyrics, 1):
-                self.logger.info(f"{i:3d}: {line}")
+            self.logger.info(f"\nMatch found for: {reference}")
+            self.logger.info(f"Score: {match.score:.3f}")
+            self.logger.info(f"Confidence: {match.confidence:.3f}")
+            self.logger.info(f"Timing: {format_timestamp(match.timing[0])} -> {format_timestamp(match.timing[1])}")
+            self.logger.info("Matched words:")
+            for word in match.words:
+                self.logger.info(
+                    f"  {word.text:<20} "
+                    f"Time: {word.start:.2f} -> {word.end:.2f} "
+                    f"Probability: {word.probability:.2f}"
+                )
 
-    def log_transcription_results(self, segments: List[Dict]):
-        """Log the transcription results."""
+    def log_alignment_refinement(self, line: AlignedLine, refined_start: float, refined_end: float):
+        """Log forced alignment refinement results."""
         if self.debug_mode and self.logger:
-            self.logger.info("\nTranscription Results:")
-            for seg in segments:
-                self.logger.info(f"{format_timestamp(seg.start)} -> {format_timestamp(seg.end)}: {seg.text}")
-
-    def log_alignment_progress(self, reference: str, matches: List[MatchResult], best_match: Optional[MatchResult]):
-        """Log the alignment progress for a line."""
-        if self.debug_mode and self.logger:
-            self.logger.info("\nAlignment Progress:")
-            self.logger.info(f"Reference Line: {reference}")
-            if matches:
-                self.logger.info(f"Found {len(matches)} potential matches")
-                if best_match:
-                    self.logger.info(f"Best Match Score: {best_match.score:.3f}")
-                    self.logger.info(f"Best Match Timing: {format_timestamp(best_match.timing[0])} -> {format_timestamp(best_match.timing[1])}")
-            else:
-                self.logger.info("No matches found")
+            self.logger.info(f"\nRefinement for line: {line.text}")
+            self.logger.info(f"Original timing: {format_timestamp(line.start)} -> {format_timestamp(line.end)}")
+            self.logger.info(f"Refined timing: {format_timestamp(refined_start)} -> {format_timestamp(refined_end)}")
 
     def log_final_results(self, aligned_lyrics: List[AlignedLine]):
         """Log the final alignment results."""
@@ -88,3 +101,8 @@ class DebugLogger:
                     self.logger.info("(Chorus Line)")
                 if line.manual_timing:
                     self.logger.info("(Manual Timing Applied)")
+
+    def log_error(self, message: str):
+        """Log error message."""
+        if self.debug_mode and self.logger:
+            self.logger.error(f"\nERROR: {message}")
