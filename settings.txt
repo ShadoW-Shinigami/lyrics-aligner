@@ -5,10 +5,10 @@
 # Lines starting with # are ignored
 
 # Folder containing your audio files (MP3/WAV)
-AUDIO_FOLDER = r"your/path/here"
+AUDIO_FOLDER = "Your/path/here"
 
 # Folder where you want the SRT files to be saved
-OUTPUT_FOLDER = r"your/path/here"
+OUTPUT_FOLDER = "Your/path/here"
 
 # Optional: Folder containing lyrics text files (if different from audio folder)
 # Leave empty to look in the audio folder
