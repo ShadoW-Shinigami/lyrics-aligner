@@ -1,0 +1,18 @@
+# Lyrics-SRT Settings
+# Put your paths below (one per line)
+# You can use either / or \ in paths
+# Wrap paths in quotes if they contain spaces
+# Lines starting with # are ignored
+
+# Folder containing your audio files (MP3/WAV)
+AUDIO_FOLDER = r"your/path/here"
+
+# Folder where you want the SRT files to be saved
+OUTPUT_FOLDER = r"your/path/here"
+
+# Optional: Folder containing lyrics text files (if different from audio folder)
+# Leave empty to look in the audio folder
+LYRICS_FOLDER = 
+
+# Optional: Set to 'yes' for detailed debug logs
+DEBUG = yes
