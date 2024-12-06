@@ -68,21 +68,20 @@ class LyricsAligner:
             # Load and process audio
             audio = whisperx.load_audio(audio_path)
             
-            # Transcribe with VAD (built into transcribe)
+            # Transcribe
             result = self.model.transcribe(
                 audio,
                 batch_size=self.config.batch_size,
-                compute_type=self.config.compute_type,
-                vad_filter=self.config.use_vad,
-                vad_parameters={"onset": self.config.vad_onset, "offset": self.config.vad_offset}
+                language="en"
             )
 
             # Align transcription
             aligned_results = whisperx.align(
-                result["segments"],
-                self.alignment_model,
-                audio,
-                self.device,
+                transcript=result["segments"],
+                model=self.alignment_model[0],  # The model itself
+                align_model_metadata=self.alignment_model[1],  # The metadata
+                audio=audio,
+                device=self.device,
                 return_char_alignments=False
             )
 
@@ -194,39 +193,41 @@ class LyricsAligner:
                 self.debug_logger.logger.info(f"\nRefining alignment for: {line.text}")
             
             try:
-                # 1. Extract audio segment with buffer
+                # Extract audio segment with buffer
                 buffer = 0.5  # 500ms buffer
                 start_sample = max(0, int((line.start - buffer) * 16000))
                 end_sample = min(len(audio), int((line.end + buffer) * 16000))
                 segment = audio[start_sample:end_sample]
                 
-                # 2. Prepare segment with known timing
-                segment_duration = (end_sample - start_sample) / 16000
+                # Create alignment model input
                 segments = [{
                     "text": line.text,
                     "start": buffer,
-                    "end": segment_duration - buffer
+                    "end": (end_sample - start_sample) / 16000 - buffer
                 }]
                 
-                # 3. Use the alignment model directly for forced alignment
-                result = self.alignment_model.align(
-                    text=line.text,
+                # Use whisperx.align with correct parameter order
+                result = whisperx.align(
+                    transcript=segments,
+                    model=self.alignment_model[0],  # The model itself
+                    align_model_metadata=self.alignment_model[1],  # The metadata
                     audio=segment,
-                    device=self.device
+                    device=self.device,
+                    return_char_alignments=False
                 )
                 
-                if result and "word_segments" in result:
-                    words = result["word_segments"]
-                    if words:
-                        # 4. Adjust timing to account for the buffer
+                if result and "segments" in result and result["segments"]:
+                    aligned_segment = result["segments"][0]
+                    if "words" in aligned_segment:
+                        words = aligned_segment["words"]
+                        # Adjust timing to account for the buffer
                         start_offset = line.start - buffer if line.start > buffer else 0
                         
-                        # 5. Create refined line with word-level alignment
                         refined_line = AlignedLine(
                             text=line.text,
                             start=words[0]["start"] + start_offset,
                             end=words[-1]["end"] + start_offset,
-                            confidence=max(line.confidence, result.get("confidence", 0.0)),
+                            confidence=max(line.confidence, aligned_segment.get("confidence", 0.0)),
                             is_chorus=line.is_chorus,
                             words=[WordSegment(
                                 text=w["word"],

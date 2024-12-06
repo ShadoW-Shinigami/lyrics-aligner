@@ -13,7 +13,8 @@
     "expected_words_per_second": 3.0,
     
     "batch_size": 16,
-    "compute_type": "int8",
+    "compute_type": "float16",
+    "use_vad": true,
     "vad_onset": 0.5,
     "vad_offset": 0.363,
     "min_word_duration": 0.1,

@@ -5,10 +5,10 @@
 # Lines starting with # are ignored
 
 # Folder containing your audio files (MP3/WAV)
-AUDIO_FOLDER = "Your/Folder/Here"
+AUDIO_FOLDER = "C:\Users\shado\Documents\Lyrics-SRT\Tomorrow-Not-Today"
 
 # Folder where you want the SRT files to be saved
-OUTPUT_FOLDER = "Your/Folder/Here"
+OUTPUT_FOLDER = "C:\Users\shado\Documents\Lyrics-SRT\Tomorrow-Not-Today"
 
 # Optional: Folder containing lyrics text files (if different from audio folder)
 # Leave empty to look in the audio folder
